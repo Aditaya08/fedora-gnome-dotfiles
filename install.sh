@@ -110,3 +110,103 @@ install_extensions() {
     say "  installed: $uuid"
   done < "$REPO/gnome/extensions.list"
 }
+
+# dconf load merges: only keys present in the file change. The enabled list is built
+# at install time from what actually installed, so a failed extension never becomes
+# an error badge in the Extensions app.
+load_dconf() {
+  say "Applying dconf settings"
+  local d="$REPO/gnome/dconf" uuid active=() list
+  dconf load /org/gnome/desktop/interface/      < "$d/interface.ini"
+  dconf load /org/gnome/desktop/background/     < "$d/background.ini"
+  dconf load /org/gnome/desktop/wm/preferences/ < "$d/wm-preferences.ini"
+  dconf load /org/gnome/desktop/app-folders/    < "$d/app-folders.ini"
+
+  for f in "$d"/extensions/*.ini; do
+    uuid="$(basename "$f" .ini)"
+    if gnome-extensions list 2>/dev/null | grep -qx "$uuid"; then
+      dconf load "/org/gnome/shell/extensions/$uuid/" < "$f"
+    else
+      warn "not installed, skipping settings: $uuid"
+    fi
+  done
+
+  while read -r uuid; do
+    [[ -z "$uuid" || "$uuid" == \#* ]] && continue
+    gnome-extensions list 2>/dev/null | grep -qx "$uuid" && active+=("'$uuid'")
+  done < "$REPO/gnome/extensions.list"
+  list="[$(IFS=,; echo "${active[*]}")]"
+  { echo "enabled-extensions=$list"; cat "$d/shell.ini"; } | dconf load /org/gnome/shell/
+}
+
+set_wallpaper() {
+  say "Setting wallpaper"
+  mkdir -p "$HOME/.config"
+  cp "$REPO/gnome/wallpaper.png" "$HOME/.config/background"
+  gsettings set org.gnome.desktop.background picture-uri      "file://$HOME/.config/background"
+  gsettings set org.gnome.desktop.background picture-uri-dark "file://$HOME/.config/background"
+}
+
+flatpak_bridge() {
+  command -v flatpak >/dev/null || { warn "flatpak not installed, skipping"; return 0; }
+  say "Applying flatpak override"
+  flatpak override --user --filesystem="$HOME/.themes" --filesystem="$HOME/.icons"
+  flatpak override --user --env=ICON_THEME="$ICON_THEME"
+  # Deliberate: GTK_THEME does not reach any installed flatpak (GTK4/Qt/Electron).
+  flatpak override --user --unset-env=GTK_THEME 2>/dev/null || true
+}
+
+install_terminals() {
+  say "Setting up kitty, fish and ghostty"
+  mkdir -p "$HOME/.config/kitty/kitty-themes" "$HOME/.config/fish"
+  cp "$REPO/terminal/kitty/kitty.conf" "$HOME/.config/kitty/kitty.conf"
+  cp "$REPO/terminal/kitty/00-Default.conf" "$REPO/terminal/kitty/01-Wallust.conf" \
+     "$HOME/.config/kitty/kitty-themes/"
+  cp "$REPO/terminal/fish/multiverse-neon.omp.json" "$HOME/.config/fish/"
+  cp "$REPO/terminal/fish/config.fish" "$HOME/.config/fish/config.fish"
+
+  if ! command -v oh-my-posh >/dev/null; then
+    if [[ $OFFLINE -eq 1 ]]; then
+      warn "offline: skipping oh-my-posh"
+    else
+      curl -fsSL https://ohmyposh.dev/install.sh | bash -s -- -d "$HOME/.local/bin"
+    fi
+  fi
+
+  if [[ -d "$HOME/.config/ghostty/.git" ]]; then
+    git -C "$HOME/.config/ghostty" pull --ff-only || warn "ghostty config not updated"
+  elif [[ $OFFLINE -eq 1 ]]; then warn "offline: skipping ghostty config"
+  else
+    git clone "$GHOSTTY_REPO" "$HOME/.config/ghostty"
+  fi
+}
+
+summary() {
+  local got=0 want=0 u
+  while read -r u; do
+    [[ -z "$u" || "$u" == \#* ]] && continue
+    want=$((want+1))
+    gnome-extensions list 2>/dev/null | grep -qx "$u" && got=$((got+1))
+  done < "$REPO/gnome/extensions.list"
+  say "Done: $got/$want extensions present, themes in ~/.themes, settings loaded"
+  [[ -d "$HOME/.local/share/fonts" ]] || warn "nerd font missing — terminal will use a fallback"
+  say "Log out and back in: extension settings and the shell theme only apply on a new session"
+  [[ -d "$STATE" ]] && say "Previous dconf snapshot: $STATE"
+}
+
+main() {
+  need dconf; need gsettings; need gnome-extensions; need jq; need curl
+  backup_state
+  install_themes
+  install_icons
+  install_font
+  link_gtk
+  install_extensions
+  load_dconf
+  set_wallpaper
+  flatpak_bridge
+  install_terminals
+  summary
+}
+
+main "$@"
