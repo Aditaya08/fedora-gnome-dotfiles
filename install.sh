@@ -24,6 +24,17 @@ warn() { printf '\033[1;33m warn:\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 
+# Extension settings do not live under the uuid: each extension hardcodes its own gschema
+# path (com/github/hermes83/..., and even a typo'd ncom/), so read it from the installed
+# schema. The shortest path is the base and covers every subpath.
+ext_settings_path() {
+  local dir="$HOME/.local/share/gnome-shell/extensions/$1"
+  find "$dir" -maxdepth 2 -name '*.gschema.xml' -print0 2>/dev/null \
+    | xargs -0 -r grep -h -o 'path="/org/gnome/shell/extensions/[^"]*"' 2>/dev/null \
+    | sed 's/^path="//; s/"$//' | sort -u \
+    | awk '{ print length, $0 }' | sort -n | awk 'NR == 1 { print $2 }'
+}
+
 backup_state() {
   say "Backing up current dconf and terminal config"
   mkdir -p "$STATE"
@@ -59,10 +70,13 @@ install_icons() {
 
 install_font() {
   local entry archive family tmp
+  # One fc-list call: piping into `grep -q` closes the pipe early and pipefail would read
+  # that SIGPIPE as "font missing", re-downloading on every run.
+  local installed; installed="$(fc-list 2>/dev/null || true)"
   for entry in "${FONTS[@]}"; do
     archive="${entry%%:*}"
     family="${entry##*:}"
-    if fc-list 2>/dev/null | grep -q "$family"; then
+    if grep -qF "$family" <<<"$installed"; then
       say "Font already present: $family"; continue
     fi
     if [[ $OFFLINE -eq 1 ]]; then warn "offline: skipping font $family"; continue; fi
@@ -116,7 +130,8 @@ install_extensions() {
 # an error badge in the Extensions app.
 load_dconf() {
   say "Applying dconf settings"
-  local d="$REPO/gnome/dconf" uuid active=() list
+  local d="$REPO/gnome/dconf" uuid path active=() list
+  local have; have="$(gnome-extensions list 2>/dev/null || true)"
   dconf load /org/gnome/desktop/interface/      < "$d/interface.ini"
   dconf load /org/gnome/desktop/background/     < "$d/background.ini"
   dconf load /org/gnome/desktop/wm/preferences/ < "$d/wm-preferences.ini"
@@ -124,19 +139,29 @@ load_dconf() {
 
   for f in "$d"/extensions/*.ini; do
     uuid="$(basename "$f" .ini)"
-    if gnome-extensions list 2>/dev/null | grep -qx "$uuid"; then
-      dconf load "/org/gnome/shell/extensions/$uuid/" < "$f"
-    else
-      warn "not installed, skipping settings: $uuid"
+    if ! grep -qx "$uuid" <<<"$have"; then
+      warn "not installed, skipping settings: $uuid"; continue
     fi
+    path="$(ext_settings_path "$uuid")"
+    if [[ -z "$path" ]]; then
+      warn "no settings schema, nothing to load: $uuid"; continue
+    fi
+    dconf load "$path" < "$f"
   done
 
   while read -r uuid; do
     [[ -z "$uuid" || "$uuid" == \#* ]] && continue
-    gnome-extensions list 2>/dev/null | grep -qx "$uuid" && active+=("'$uuid'")
+    grep -qx "$uuid" <<<"$have" && active+=("'$uuid'")
   done < "$REPO/gnome/extensions.list"
-  list="[$(IFS=,; echo "${active[*]}")]"
-  { echo "enabled-extensions=$list"; cat "$d/shell.ini"; } | dconf load /org/gnome/shell/
+  # An empty [] cannot be type-inferred by dconf; @as [] is an empty string array.
+  if [[ ${#active[@]} -eq 0 ]]; then
+    list="@as []"
+  else
+    list="[$(IFS=,; echo "${active[*]}")]"
+  fi
+  # dconf accepts only keyfile groups, so drop the file's own header and supply one.
+  { echo "[/]"; echo "enabled-extensions=$list"; grep -v '^\[/\]$' "$d/shell.ini"; } \
+    | dconf load /org/gnome/shell/
 }
 
 set_wallpaper() {
@@ -183,10 +208,11 @@ install_terminals() {
 
 summary() {
   local got=0 want=0 u
+  local have; have="$(gnome-extensions list 2>/dev/null || true)"
   while read -r u; do
     [[ -z "$u" || "$u" == \#* ]] && continue
     want=$((want+1))
-    gnome-extensions list 2>/dev/null | grep -qx "$u" && got=$((got+1))
+    grep -qx "$u" <<<"$have" && got=$((got+1))
   done < "$REPO/gnome/extensions.list"
   say "Done: $got/$want extensions present, themes in ~/.themes, settings loaded"
   [[ -d "$HOME/.local/share/fonts" ]] || warn "nerd font missing — terminal will use a fallback"
