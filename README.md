@@ -36,7 +36,9 @@ Before changing anything, `install.sh` writes `dconf dump /org/gnome/` to `~/.lo
 
 ## Requirements
 
-Fedora 44, GNOME Shell 50, `git`, `curl`, `jq`, `dconf`, `gnome-extensions` (all but `jq` ship with Workstation), plus `dnf install -y kitty ghostty fish gnome-shell-extensions` for the terminals. The FantasqueSansMono and FiraCode Nerd Fonts are downloaded at install time.
+Fedora 44, GNOME Shell 50, and `dnf`. `install.sh` checks for `git`, `curl`, `jq`, `dconf` and `gnome-extensions` and installs the missing ones with `sudo dnf install` (`gnome-extensions` comes from `gnome-shell`). The FantasqueSansMono and FiraCode Nerd Fonts, the icon theme and the extensions are downloaded separately at install time.
+
+Terminals are not installed by the script; use `dnf install -y kitty ghostty fish gnome-shell-extensions` if you want them.
 
 ## Credits
 

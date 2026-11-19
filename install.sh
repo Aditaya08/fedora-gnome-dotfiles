@@ -24,6 +24,32 @@ warn() { printf '\033[1;33m warn:\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 
+# command:dnf-package. gnome-extensions ships inside gnome-shell, not its own package.
+DEPS=(git:git curl:curl jq:jq dconf:dconf gnome-extensions:gnome-shell)
+
+install_deps() {
+  say "Checking dependencies"
+  local entry cmd pkg missing=()
+  for entry in "${DEPS[@]}"; do
+    cmd="${entry%%:*}"
+    pkg="${entry##*:}"
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$pkg")
+  done
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    say "  all present"; return 0
+  fi
+  if [[ $OFFLINE -eq 1 ]]; then die "missing: ${missing[*]} (--offline, cannot install)"; fi
+  command -v dnf >/dev/null 2>&1 || die "missing: ${missing[*]} (dnf not available to install them)"
+  say "  installing: ${missing[*]}"
+  local dnf=(dnf install -y "${missing[@]}")
+  if [[ $EUID -eq 0 ]]; then "${dnf[@]}"; else sudo "${dnf[@]}"; fi \
+    || die "dnf failed for: ${missing[*]}"
+  for entry in "${DEPS[@]}"; do
+    command -v "${entry%%:*}" >/dev/null 2>&1 || die "still missing after install: ${entry%%:*}"
+  done
+  say "  installed"
+}
+
 # Extension settings do not live under the uuid: each extension hardcodes its own gschema
 # path (com/github/hermes83/..., and even a typo'd ncom/), so read it from the installed
 # schema. The shortest path is the base and covers every subpath.
@@ -221,7 +247,7 @@ summary() {
 }
 
 main() {
-  need dconf; need gsettings; need gnome-extensions; need jq; need curl
+  install_deps; need gsettings
   backup_state
   install_themes
   install_icons
