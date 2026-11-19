@@ -86,3 +86,27 @@ link_gtk() {
   cp "$REPO/gnome/gtk-4.0-settings.ini" "$HOME/.config/gtk-4.0/settings.ini"
   cp "$REPO/gnome/gtk-3.0-settings.ini" "$HOME/.config/gtk-3.0/settings.ini"
 }
+
+shell_version() { gnome-shell --version | awk '{print $3}' | cut -d. -f1; }
+
+install_extensions() {
+  say "Installing GNOME extensions for shell $(shell_version)"
+  local uuid url tmp
+  local have; have="$(gnome-extensions list 2>/dev/null || true)"
+  while read -r uuid; do
+    [[ -z "$uuid" || "$uuid" == \#* ]] && continue
+    if grep -qx "$uuid" <<<"$have"; then
+      say "  present: $uuid"; continue
+    fi
+    if [[ $OFFLINE -eq 1 ]]; then warn "offline: skipping $uuid"; continue; fi
+    url="$(curl -fsSL \
+      "https://extensions.gnome.org/extension-info/?uuid=${uuid}&shell_version=$(shell_version)" \
+      | jq -r '.download_url // empty')"
+    if [[ -z "$url" ]]; then warn "no build for GNOME $(shell_version): $uuid"; continue; fi
+    tmp="$(mktemp -d)"
+    curl -fsSL "https://extensions.gnome.org${url}" -o "$tmp/ext.zip"
+    gnome-extensions install --force "$tmp/ext.zip"
+    rm -rf "$tmp"
+    say "  installed: $uuid"
+  done < "$REPO/gnome/extensions.list"
+}
