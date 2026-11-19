@@ -1,0 +1,12 @@
+# uuid — installed from extensions.gnome.org for the running shell version
+blur-my-shell@aunetx
+compiz-alike-magic-lamp-effect@hermes83.github.com
+compiz-windows-effect@hermes83.github.com
+dash2dock-lite@icedman.github.com
+netspeedindicator@subashghimire.info.np
+user-theme@gnome-shell-extensions.gcampax.github.com
+# not installable on GNOME 50 yet (installed here as v42, State: OUT OF DATE)
+# search-light@icedman.github.com
+# stale ids found in enabled-extensions, intentionally not replayed
+# netspeed@alynx.one
+# simplenetspeed@biji.extension
